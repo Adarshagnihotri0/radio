@@ -1,0 +1,61 @@
+{
+  "expo": {
+    "name": "Radius",
+    "slug": "radius-ptt",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#052e16"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.radius.ptt",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Radius needs microphone access for push-to-talk voice transmission",
+        "NSLocationWhenInUseUsageDescription": "Radius uses your location to find nearby channels",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Radius uses your location in the background to keep channel membership current",
+        "UIBackgroundModes": ["audio", "fetch", "remote-notification"]
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#052e16"
+      },
+      "package": "com.radius.ptt",
+      "permissions": [
+        "RECORD_AUDIO",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "INTERNET",
+        "WAKE_LOCK"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow Radius to use your location for geo-fenced channels."
+        }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Allow Radius to access your microphone for push-to-talk."
+        }
+      ]
+    ],
+    "scheme": "radius"
+  }
+}

@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    @apply bg-gray-950 text-gray-100;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+
+  ::-webkit-scrollbar {
+    width: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-gray-900;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-radar-700 rounded;
+  }
+}
+
+@layer components {
+  /* Tactical HUD card */
+  .hud-card {
+    @apply bg-gray-900 border border-radar-800/40 rounded-lg p-4
+           shadow-[0_0_20px_rgba(34,197,94,0.05)];
+  }
+
+  /* PTT button base */
+  .ptt-btn {
+    @apply relative select-none cursor-pointer flex items-center justify-center
+           rounded-full border-4 border-radar-500 text-radar-400
+           transition-all duration-75 active:scale-95;
+  }
+  .ptt-btn.active {
+    @apply bg-radar-500 text-gray-950 border-radar-400
+           shadow-[0_0_30px_rgba(34,197,94,0.6)];
+  }
+
+  /* Signal strength bar */
+  .signal-bar {
+    @apply w-1.5 bg-radar-500 rounded-sm origin-bottom;
+  }
+
+  /* Frequency display */
+  .freq-display {
+    @apply font-mono text-radar-400 tracking-widest text-sm;
+  }
+
+  /* Scanning animation overlay */
+  .scan-overlay {
+    @apply pointer-events-none absolute inset-0 overflow-hidden opacity-10;
+    background: linear-gradient(
+      transparent 0%,
+      rgba(34, 197, 94, 0.15) 50%,
+      transparent 100%
+    );
+    animation: scanline 3s linear infinite;
+  }
+}
+
+/* Leaflet map dark theme override */
+.leaflet-container {
+  background: #0a0a0f !important;
+  font-family: 'JetBrains Mono', monospace;
+}

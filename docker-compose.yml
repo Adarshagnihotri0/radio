@@ -1,0 +1,118 @@
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: radius-mongodb
+    restart: unless-stopped
+    ports:
+      - '27017:27017'
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASS:-radius_dev_pass}
+      MONGO_INITDB_DATABASE: radius
+    volumes:
+      - mongodb_data:/data/db
+      - ./infrastructure/docker/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    networks:
+      - radius-net
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: radius-redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-radius_redis_pass}
+    volumes:
+      - redis_data:/data
+    networks:
+      - radius-net
+
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: radius-redis-commander
+    restart: unless-stopped
+    ports:
+      - '8081:8081'
+    environment:
+      REDIS_HOSTS: local:redis:6379:0:${REDIS_PASSWORD:-radius_redis_pass}
+    depends_on:
+      - redis
+    networks:
+      - radius-net
+
+  nginx:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/nginx.Dockerfile
+    container_name: radius-nginx
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./infrastructure/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infrastructure/nginx/websocket.conf:/etc/nginx/conf.d/websocket.conf:ro
+    depends_on:
+      - backend
+    networks:
+      - radius-net
+
+  backend:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/backend.Dockerfile
+    container_name: radius-backend
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
+    env_file:
+      - apps/backend/.env
+    environment:
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASS:-radius_dev_pass}@mongodb:27017/radius?authSource=admin
+      REDIS_URL: redis://:${REDIS_PASSWORD:-radius_redis_pass}@redis:6379
+    depends_on:
+      - mongodb
+      - redis
+    networks:
+      - radius-net
+    volumes:
+      - ./apps/backend:/app/apps/backend
+      - /app/apps/backend/node_modules
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: radius-prometheus
+    restart: unless-stopped
+    ports:
+      - '9090:9090'
+    volumes:
+      - ./infrastructure/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - radius-net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: radius-grafana
+    restart: unless-stopped
+    ports:
+      - '3001:3000'
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infrastructure/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+    depends_on:
+      - prometheus
+    networks:
+      - radius-net
+
+volumes:
+  mongodb_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  radius-net:
+    driver: bridge
