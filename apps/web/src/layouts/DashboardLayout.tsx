@@ -1,9 +1,11 @@
+import { useEffect } from 'react';
 import { Outlet, NavLink } from 'react-router-dom';
 import clsx from 'clsx';
 import { Radio, Map, ListFilter, LogOut, PlaySquare } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth.store';
 import { authApi } from '@/services/auth.api';
-import { disconnectSocket } from '@/sockets/socket.client';
+import { getSocket, disconnectSocket } from '@/sockets/socket.client';
+import { useChannelStore } from '@/stores/channel.store';
 
 const NAV = [
     { to: '/channels', icon: ListFilter, label: 'Channels' },
@@ -14,6 +16,19 @@ const NAV = [
 
 export function DashboardLayout() {
     const { username, clearAuth } = useAuthStore();
+    const activeChannelId = useChannelStore((s) => s.activeChannelId);
+
+    // Re-join the channel room whenever the socket reconnects (room membership is in-memory)
+    useEffect(() => {
+        const socket = getSocket();
+        const rejoin = () => {
+            if (activeChannelId) {
+                socket.emit('channel:join', { channelId: activeChannelId });
+            }
+        };
+        socket.on('connect', rejoin);
+        return () => { socket.off('connect', rejoin); };
+    }, [activeChannelId]);
 
     const handleLogout = async () => {
         try { await authApi.logout(); } catch { /* ignore */ }

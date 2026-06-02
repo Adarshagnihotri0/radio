@@ -1,5 +1,6 @@
 import { io, Socket } from 'socket.io-client';
 import { useAuthStore } from '@/stores/auth.store';
+import toast from 'react-hot-toast';
 
 let socket: Socket | null = null;
 
@@ -24,6 +25,12 @@ export function getSocket(): Socket {
 
     socket.on('connect_error', (err) => {
       console.error('[Socket] Connection error:', err.message);
+    });
+
+    // Surface server-side WsException errors to the user
+    socket.on('exception', (err: { message?: string } | string) => {
+      const msg = typeof err === 'string' ? err : (err?.message ?? 'Unknown server error');
+      toast.error(msg);
     });
   }
 

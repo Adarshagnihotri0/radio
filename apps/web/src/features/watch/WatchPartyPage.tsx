@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import ReactPlayer from 'react-player';
 import toast from 'react-hot-toast';
-import YouTubePlayer from 'youtube-player';
+import clsx from 'clsx';
 import { useChannelStore } from '@/stores/channel.store';
 import { useAuthStore } from '@/stores/auth.store';
 import { getSocket } from '@/sockets/socket.client';
-
-type YouTubePlayerInstance = ReturnType<typeof YouTubePlayer>;
 
 type MediaProvider = 'youtube';
 
@@ -25,13 +24,9 @@ interface MediaSyncEvent {
   mediaState: MediaState;
 }
 
-function extractYouTubeVideoId(input: string): string | null {
+function extractVideoId(input: string): string | null {
   const trimmed = input.trim();
-
-  // Direct 11-char YouTube ID
-  if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) {
-    return trimmed;
-  }
+  if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
 
   try {
     const url = new URL(trimmed);
@@ -68,39 +63,30 @@ export function WatchPartyPage() {
     [channels, activeChannelId],
   );
 
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const playerRef = useRef<YouTubePlayerInstance | null>(null);
+  const playerRef = useRef<ReactPlayer | null>(null);
   const loadedVideoIdRef = useRef<string | null>(null);
+  const latestPositionRef = useRef(0);
 
   const [videoInput, setVideoInput] = useState('');
   const [hostUserId, setHostUserId] = useState<string | null>(null);
   const [mediaState, setMediaState] = useState<MediaState | null>(null);
+  const [socketConnected, setSocketConnected] = useState(false);
+  const [playerReady, setPlayerReady] = useState(false);
+  const [currentVideoId, setCurrentVideoId] = useState<string | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1);
 
   const isHost = Boolean(userId && hostUserId === userId);
 
-  useEffect(() => {
-    if (!containerRef.current || playerRef.current) {
-      return;
-    }
+  const getCurrentTime = () => playerRef.current?.getCurrentTime() ?? 0;
 
-    const player = YouTubePlayer(containerRef.current, {
-      width: '100%',
-      height: '100%',
-      playerVars: {
-        autoplay: 0,
-        controls: 1,
-        rel: 0,
-        modestbranding: 1,
-      },
-    });
-
-    playerRef.current = player;
-
-    return () => {
-      void player.destroy();
-      playerRef.current = null;
-    };
-  }, []);
+  const getCurrentPlaybackRate = () => {
+    const internal = playerRef.current?.getInternalPlayer() as
+      | { getPlaybackRate?: () => number }
+      | undefined;
+    const rate = internal?.getPlaybackRate?.();
+    return typeof rate === 'number' && Number.isFinite(rate) ? rate : playbackRate;
+  };
 
   useEffect(() => {
     if (!activeChannelId) {
@@ -111,10 +97,24 @@ export function WatchPartyPage() {
 
     const socket = getSocket();
 
+    setSocketConnected(socket.connected);
+    const onConnect = () => setSocketConnected(true);
+    const onDisconnect = () => setSocketConnected(false);
+    socket.on('connect', onConnect);
+    socket.on('disconnect', onDisconnect);
+
     const applyMediaEvent = (event: MediaSyncEvent) => {
       if (event.channelId !== activeChannelId) return;
       setHostUserId(event.hostUserId);
       setMediaState(event.mediaState);
+    };
+
+    const handleMediaSet = (event: MediaSyncEvent) => {
+      if (event.channelId !== activeChannelId) return;
+      applyMediaEvent(event);
+      if (event.mediaState.updatedByUserId === userId) {
+        toast.success('Video loaded for the room');
+      }
     };
 
     const handleHostLeft = ({ channelId }: { channelId: string }) => {
@@ -134,106 +134,77 @@ export function WatchPartyPage() {
     };
 
     socket.on('room:media:sync', applyMediaEvent);
-    socket.on('room:media:set', applyMediaEvent);
+    socket.on('room:media:set', handleMediaSet);
     socket.on('room:media:host_left', handleHostLeft);
     socket.on('room:media:host_taken', handleHostTaken);
     socket.on('room:media:not_host', handleNotHost);
 
     return () => {
+      socket.off('connect', onConnect);
+      socket.off('disconnect', onDisconnect);
       socket.off('room:media:sync', applyMediaEvent);
-      socket.off('room:media:set', applyMediaEvent);
+      socket.off('room:media:set', handleMediaSet);
       socket.off('room:media:host_left', handleHostLeft);
       socket.off('room:media:host_taken', handleHostTaken);
       socket.off('room:media:not_host', handleNotHost);
     };
-  }, [activeChannelId]);
+  }, [activeChannelId, userId]);
 
   useEffect(() => {
-    const player = playerRef.current;
+    if (!mediaState || !activeChannelId) return;
 
-    if (!player || !mediaState || !activeChannelId) {
-      return;
+    const expectedPosition = mediaState.isPlaying
+      ? mediaState.positionSec + (Date.now() - mediaState.updatedAtMs) / 1000
+      : mediaState.positionSec;
+
+    if (loadedVideoIdRef.current !== mediaState.videoId) {
+      loadedVideoIdRef.current = mediaState.videoId;
+      setCurrentVideoId(mediaState.videoId);
+      setPlayerReady(false);
     }
 
-    if (isHost && mediaState.updatedByUserId === userId) {
-      return;
-    }
+    setPlaybackRate(mediaState.playbackRate);
+    setIsPlaying(mediaState.isPlaying);
 
-    const applyState = async () => {
-      try {
-        const expectedPosition = mediaState.isPlaying
-          ? mediaState.positionSec + (Date.now() - mediaState.updatedAtMs) / 1000
-          : mediaState.positionSec;
-
-        if (loadedVideoIdRef.current !== mediaState.videoId) {
-          await player.loadVideoById(mediaState.videoId, Math.max(0, expectedPosition));
-          loadedVideoIdRef.current = mediaState.videoId;
-        } else {
-          const currentTime = await player.getCurrentTime();
-          const drift = expectedPosition - currentTime;
-
-          if (Math.abs(drift) > 0.25) {
-            await player.seekTo(Math.max(0, expectedPosition), true);
-          }
-        }
-
-        await player.setPlaybackRate(mediaState.playbackRate);
-
-        if (mediaState.isPlaying) {
-          await player.playVideo();
-        } else {
-          await player.pauseVideo();
-        }
-      } catch {
-        // Ignore transient player errors while iframe is initializing.
+    if (!isHost && playerReady) {
+      const drift = expectedPosition - latestPositionRef.current;
+      if (Math.abs(drift) > 0.5) {
+        playerRef.current?.seekTo(Math.max(0, expectedPosition), 'seconds');
       }
-    };
-
-    void applyState();
-  }, [activeChannelId, mediaState, isHost, userId]);
+    }
+  }, [activeChannelId, mediaState, isHost, playerReady]);
 
   useEffect(() => {
-    if (!activeChannelId || !isHost || !mediaState) {
-      return;
-    }
+    if (!activeChannelId || !isHost || !mediaState) return;
 
     const socket = getSocket();
     const id = setInterval(() => {
-      const player = playerRef.current;
-      if (!player) return;
-
-      void (async () => {
-        try {
-          const positionSec = await player.getCurrentTime();
-          const playbackRate = await player.getPlaybackRate();
-          const stateCode = await player.getPlayerState();
-
-          socket.emit('room:media:state', {
-            channelId: activeChannelId,
-            positionSec,
-            playbackRate,
-            isPlaying: stateCode === 1,
-          });
-        } catch {
-          // Ignore temporary player API failures.
-        }
-      })();
+      socket.emit('room:media:state', {
+        channelId: activeChannelId,
+        positionSec: getCurrentTime(),
+        playbackRate: getCurrentPlaybackRate(),
+        isPlaying,
+      });
     }, 2000);
 
     return () => clearInterval(id);
-  }, [activeChannelId, isHost, mediaState]);
+  }, [activeChannelId, isHost, mediaState, isPlaying, playbackRate]);
 
   const loadVideoAsHost = () => {
     if (!activeChannelId) return;
 
-    const videoId = extractYouTubeVideoId(videoInput);
+    if (!socketConnected) {
+      toast.error('Not connected to server - check backend');
+      return;
+    }
+
+    const videoId = extractVideoId(videoInput);
     if (!videoId) {
       toast.error('Enter a valid YouTube URL or video ID');
       return;
     }
 
-    const socket = getSocket();
-    socket.emit('room:media:set', {
+    getSocket().emit('room:media:set', {
       channelId: activeChannelId,
       provider: 'youtube',
       videoId,
@@ -241,71 +212,60 @@ export function WatchPartyPage() {
       isPlaying: false,
       playbackRate: 1,
     });
-
-    toast.success('Video loaded for the room');
   };
 
-  const emitPlaybackAction = async (event: 'room:media:play' | 'room:media:pause' | 'room:media:seek') => {
-    if (!activeChannelId || !isHost || !playerRef.current) return;
+  const emitControl = (event: 'room:media:play' | 'room:media:pause' | 'room:media:seek') => {
+    if (!activeChannelId || !isHost) return;
 
-    try {
-      const player = playerRef.current;
-      const positionSec = await player.getCurrentTime();
-      const playbackRate = await player.getPlaybackRate();
-
-      const socket = getSocket();
-      socket.emit(event, {
-        channelId: activeChannelId,
-        positionSec,
-        playbackRate,
-      });
-    } catch {
-      toast.error('Player is not ready yet');
-    }
+    getSocket().emit(event, {
+      channelId: activeChannelId,
+      positionSec: getCurrentTime(),
+      playbackRate: getCurrentPlaybackRate(),
+    });
   };
 
-  const playAsHost = async () => {
-    if (!playerRef.current || !isHost) return;
-    await playerRef.current.playVideo();
-    await emitPlaybackAction('room:media:play');
+  const playAsHost = () => {
+    if (!isHost) return;
+    setIsPlaying(true);
+    emitControl('room:media:play');
   };
 
-  const pauseAsHost = async () => {
-    if (!playerRef.current || !isHost) return;
-    await playerRef.current.pauseVideo();
-    await emitPlaybackAction('room:media:pause');
+  const pauseAsHost = () => {
+    if (!isHost) return;
+    setIsPlaying(false);
+    emitControl('room:media:pause');
   };
 
-  const seekBySeconds = async (delta: number) => {
-    if (!playerRef.current || !isHost) return;
+  const seekBySeconds = (delta: number) => {
+    if (!isHost) return;
 
-    try {
-      const current = await playerRef.current.getCurrentTime();
-      const next = Math.max(0, current + delta);
-      await playerRef.current.seekTo(next, true);
-      await emitPlaybackAction('room:media:seek');
-    } catch {
-      toast.error('Cannot seek right now');
-    }
+    const next = Math.max(0, getCurrentTime() + delta);
+    playerRef.current?.seekTo(next, 'seconds');
+    emitControl('room:media:seek');
   };
 
   if (!activeChannelId || !activeChannel) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-500">
-        <p className="text-2xl">Video room unavailable</p>
-        <p className="text-sm">Join a channel first, then open Watch Party.</p>
+        <p className="text-xl">Join a channel first, then open Watch Party.</p>
       </div>
     );
   }
 
   return (
-    <div className="p-6 space-y-5 max-w-5xl mx-auto">
+    <div className="p-6 space-y-4 max-w-5xl mx-auto">
       <div className="hud-card">
         <p className="text-xs text-gray-500 uppercase tracking-widest">Watch Party</p>
         <h1 className="text-xl text-radar-300 font-semibold mt-1">{activeChannel.name}</h1>
-        <p className="text-sm text-gray-400 mt-1">
-          {isHost ? 'You are the host.' : hostUserId ? `Host user: ${hostUserId}` : 'No host active.'}
-        </p>
+        <div className="flex items-center justify-between mt-1">
+          <p className="text-sm text-gray-400">
+            {isHost ? 'You are the host.' : hostUserId ? `Host: ${hostUserId}` : 'No host active.'}
+          </p>
+          <span className={clsx('flex items-center gap-1.5 text-xs', socketConnected ? 'text-green-400' : 'text-red-400')}>
+            <span className={clsx('w-1.5 h-1.5 rounded-full', socketConnected ? 'bg-green-400' : 'bg-red-500 animate-pulse')} />
+            {socketConnected ? 'Connected' : 'Disconnected'}
+          </span>
+        </div>
       </div>
 
       <div className="hud-card space-y-3">
@@ -314,6 +274,12 @@ export function WatchPartyPage() {
           <input
             value={videoInput}
             onChange={(e) => setVideoInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                loadVideoAsHost();
+              }
+            }}
             placeholder="https://www.youtube.com/watch?v=..."
             className="flex-1 bg-gray-900 border border-gray-700 rounded-md px-3 py-2 text-sm text-gray-100 outline-none focus:border-radar-500"
           />
@@ -321,44 +287,73 @@ export function WatchPartyPage() {
             onClick={loadVideoAsHost}
             className="px-4 py-2 rounded-md bg-radar-700 text-white text-sm hover:bg-radar-600 transition-colors"
           >
-            Load As Host
+            Load as Host
           </button>
         </div>
       </div>
 
       <div className="rounded-xl overflow-hidden border border-gray-800 bg-black aspect-video">
-        <div ref={containerRef} className="w-full h-full" />
+        {currentVideoId ? (
+          <ReactPlayer
+            ref={playerRef}
+            url={`https://www.youtube.com/watch?v=${currentVideoId}`}
+            width="100%"
+            height="100%"
+            controls
+            playing={isPlaying}
+            playbackRate={playbackRate}
+            onReady={() => setPlayerReady(true)}
+            onProgress={({ playedSeconds }) => {
+              latestPositionRef.current = playedSeconds;
+            }}
+            onPlay={() => {
+              if (isHost) emitControl('room:media:play');
+            }}
+            onPause={() => {
+              if (isHost) emitControl('room:media:pause');
+            }}
+            onError={(error) => {
+              const message = typeof error === 'string' ? error : 'Playback failed. This video may block embeds.';
+              toast.error(message);
+            }}
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-gray-500 text-sm">
+            Load a YouTube video to start the watch party.
+          </div>
+        )}
       </div>
 
       <div className="hud-card flex flex-wrap items-center gap-2">
         <button
-          onClick={() => void seekBySeconds(-10)}
-          disabled={!isHost}
-          className="px-3 py-2 text-sm rounded-md border border-gray-700 text-gray-200 disabled:opacity-50"
+          onClick={() => seekBySeconds(-10)}
+          disabled={!isHost || !playerReady}
+          className="px-3 py-2 text-sm rounded-md border border-gray-700 text-gray-200 disabled:opacity-40"
         >
           -10s
         </button>
         <button
-          onClick={() => void playAsHost()}
-          disabled={!isHost}
-          className="px-3 py-2 text-sm rounded-md border border-gray-700 text-gray-200 disabled:opacity-50"
+          onClick={playAsHost}
+          disabled={!isHost || !playerReady}
+          className="px-3 py-2 text-sm rounded-md border border-gray-700 text-gray-200 disabled:opacity-40"
         >
           Play
         </button>
         <button
-          onClick={() => void pauseAsHost()}
-          disabled={!isHost}
-          className="px-3 py-2 text-sm rounded-md border border-gray-700 text-gray-200 disabled:opacity-50"
+          onClick={pauseAsHost}
+          disabled={!isHost || !playerReady}
+          className="px-3 py-2 text-sm rounded-md border border-gray-700 text-gray-200 disabled:opacity-40"
         >
           Pause
         </button>
         <button
-          onClick={() => void seekBySeconds(10)}
-          disabled={!isHost}
-          className="px-3 py-2 text-sm rounded-md border border-gray-700 text-gray-200 disabled:opacity-50"
+          onClick={() => seekBySeconds(10)}
+          disabled={!isHost || !playerReady}
+          className="px-3 py-2 text-sm rounded-md border border-gray-700 text-gray-200 disabled:opacity-40"
         >
           +10s
         </button>
+        {!isHost && <span className="text-xs text-gray-600 ml-auto">Controls available to host only</span>}
       </div>
     </div>
   );

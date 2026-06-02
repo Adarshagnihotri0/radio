@@ -93,6 +93,49 @@ npm run web:dev
 npm run mobile:dev
 ```
 
+### Run Commands (Copy/Paste)
+
+From the monorepo root (`radius-platform/`):
+
+```bash
+# install deps
+npm install
+
+# backend only
+npm run backend:dev
+
+# web only
+npm run web:dev
+
+# backend + web in separate terminals
+npm run backend:dev
+npm run web:dev
+
+# production build checks
+npm run build --workspace=apps/backend
+npm run build --workspace=apps/web
+```
+
+From the parent folder (example: `/Users/.../project vibe`):
+
+```bash
+# backend
+npm --prefix ./radius-platform run backend:dev
+
+# web
+npm --prefix ./radius-platform run web:dev
+
+# build checks
+npm --prefix ./radius-platform run build --workspace=apps/backend
+npm --prefix ./radius-platform run build --workspace=apps/web
+```
+
+If port `3000` is busy:
+
+```bash
+lsof -ti :3000 | xargs kill -9
+```
+
 ### URLs
 
 | Service | URL |
