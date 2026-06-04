@@ -215,12 +215,15 @@ export function WatchPartyPage() {
         }
     };
 
-    const emitControl = (event: 'room:media:play' | 'room:media:pause' | 'room:media:seek') => {
+    const emitControl = (
+        event: 'room:media:play' | 'room:media:pause' | 'room:media:seek',
+        positionSec?: number,
+    ) => {
         if (!activeChannelId || !canControl) return;
 
         getSocket().emit(event, {
             channelId: activeChannelId,
-            positionSec: getCurrentTime(),
+            positionSec: positionSec ?? getCurrentTime(),
             playbackRate: getCurrentPlaybackRate(),
         });
     };
@@ -241,8 +244,9 @@ export function WatchPartyPage() {
         if (!canControl) return;
 
         const next = Math.max(0, getCurrentTime() + delta);
+        latestPositionRef.current = next;
         playerRef.current?.seekTo(next, 'seconds');
-        emitControl('room:media:seek');
+        emitControl('room:media:seek', next);
     };
 
     if (!activeChannelId || !activeChannel) {
@@ -352,11 +356,23 @@ export function WatchPartyPage() {
                                 onProgress={({ playedSeconds }) => {
                                     latestPositionRef.current = playedSeconds;
                                 }}
+                                onSeek={(seconds) => {
+                                    latestPositionRef.current = seconds;
+                                    if (canControl) {
+                                        emitControl('room:media:seek', seconds);
+                                    }
+                                }}
                                 onPlay={() => {
-                                    if (isHost) emitControl('room:media:play');
+                                    if (canControl) {
+                                        setIsPlaying(true);
+                                        emitControl('room:media:play');
+                                    }
                                 }}
                                 onPause={() => {
-                                    if (isHost) emitControl('room:media:pause');
+                                    if (canControl) {
+                                        setIsPlaying(false);
+                                        emitControl('room:media:pause');
+                                    }
                                 }}
                                 onError={(error) => {
                                     const message = typeof error === 'string' ? error : 'Playback failed. This video may block embeds.';
