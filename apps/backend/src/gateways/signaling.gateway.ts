@@ -21,19 +21,31 @@ interface AuthenticatedSocket extends Socket {
   username?: string;
 }
 
+interface WebRtcSessionDescription {
+  type: 'offer' | 'answer' | 'pranswer' | 'rollback';
+  sdp?: string;
+}
+
+interface WebRtcIceCandidate {
+  candidate?: string;
+  sdpMid?: string | null;
+  sdpMLineIndex?: number | null;
+  usernameFragment?: string | null;
+}
+
 interface RtcOfferPayload {
   to: string;
-  sdp: RTCSessionDescriptionInit;
+  sdp: WebRtcSessionDescription;
 }
 
 interface RtcAnswerPayload {
   to: string;
-  sdp: RTCSessionDescriptionInit;
+  sdp: WebRtcSessionDescription;
 }
 
 interface RtcIcePayload {
   to: string;
-  candidate: RTCIceCandidateInit;
+  candidate: WebRtcIceCandidate;
 }
 
 interface PttPayload {
@@ -157,8 +169,36 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
   ): Promise<void> {
     this.assertAuth(client);
     const { channelId } = payload;
+    const targetRoom = `channel:${channelId}`;
 
-    await client.join(`channel:${channelId}`);
+    // A user can stay in only one channel at a time.
+    for (const room of Array.from(client.rooms)) {
+      if (!room.startsWith('channel:') || room === targetRoom) {
+        continue;
+      }
+
+      const previousChannelId = room.replace('channel:', '');
+      await this.redisService.releaseSpeakerLock(previousChannelId, client.userId!);
+      const hostReleased = await this.releaseMediaHostIfOwner(previousChannelId, client.userId!);
+      if (hostReleased) {
+        this.server.to(room).emit('room:media:host_left', { channelId: previousChannelId });
+      }
+
+      await client.leave(room);
+      await this.channelsService.incrementActiveUsers(previousChannelId, -1);
+
+      this.server.to(room).emit('user:left', {
+        userId: client.userId,
+        channelId: previousChannelId,
+      });
+    }
+
+    const alreadyInRoom = client.rooms.has(targetRoom);
+    if (alreadyInRoom) {
+      return;
+    }
+
+    await client.join(targetRoom);
     await this.channelsService.incrementActiveUsers(channelId, 1);
 
     const members = await this.getChannelMembers(channelId);
