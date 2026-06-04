@@ -82,6 +82,9 @@ export function WatchPartyPage() {
     const suppressNextSeekEventRef = useRef(false);
     const lastSeekEmitAtRef = useRef(0);
     const lastProgressPositionRef = useRef<number | null>(null);
+    const followerPauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const latestMediaUpdatedAtRef = useRef<number>(0);
+    const lastProgressWallClockRef = useRef<number>(0);
 
     const [searchQuery, setSearchQuery] = useState('');
     const [searching, setSearching] = useState(false);
@@ -188,17 +191,42 @@ export function WatchPartyPage() {
             ? mediaState.positionSec + (Date.now() - mediaState.updatedAtMs) / 1000
             : mediaState.positionSec;
 
+        latestMediaUpdatedAtRef.current = mediaState.updatedAtMs;
+
         if (loadedVideoIdRef.current !== mediaState.videoId) {
             loadedVideoIdRef.current = mediaState.videoId;
             setCurrentVideoId(mediaState.videoId);
             latestPositionRef.current = 0;
             lastProgressPositionRef.current = null;
+            lastProgressWallClockRef.current = 0;
             needsInitialSyncRef.current = true;
             setPlayerReady(false);
         }
 
         setPlaybackRate(mediaState.playbackRate);
-        setIsPlaying(mediaState.isPlaying);
+
+        if (canControl) {
+            setIsPlaying(mediaState.isPlaying);
+        } else if (mediaState.isPlaying) {
+            if (followerPauseTimerRef.current) {
+                clearTimeout(followerPauseTimerRef.current);
+                followerPauseTimerRef.current = null;
+            }
+            setIsPlaying(true);
+        } else {
+            if (followerPauseTimerRef.current) {
+                clearTimeout(followerPauseTimerRef.current);
+            }
+
+            const pauseAtVersion = mediaState.updatedAtMs;
+            followerPauseTimerRef.current = setTimeout(() => {
+                // Apply pause only if no newer sync update arrived and playback really stalled.
+                const stalledForMs = Date.now() - lastProgressWallClockRef.current;
+                if (latestMediaUpdatedAtRef.current === pauseAtVersion && stalledForMs > 2200) {
+                    setIsPlaying(false);
+                }
+            }, 2600);
+        }
 
         if (!isHost && playerReady) {
             const drift = expectedPosition - latestPositionRef.current;
@@ -207,7 +235,16 @@ export function WatchPartyPage() {
                 needsInitialSyncRef.current = false;
             }
         }
-    }, [activeChannelId, mediaState, isHost, playerReady]);
+    }, [activeChannelId, mediaState, isHost, playerReady, canControl]);
+
+    useEffect(() => {
+        return () => {
+            if (followerPauseTimerRef.current) {
+                clearTimeout(followerPauseTimerRef.current);
+                followerPauseTimerRef.current = null;
+            }
+        };
+    }, []);
 
     useEffect(() => {
         if (!activeChannelId || !isHost || !mediaState) return;
@@ -479,6 +516,7 @@ export function WatchPartyPage() {
                                     const previous = lastProgressPositionRef.current;
                                     latestPositionRef.current = playedSeconds;
                                     lastProgressPositionRef.current = playedSeconds;
+                                    lastProgressWallClockRef.current = Date.now();
 
                                     // Fallback for YouTube iframe: some seekbar drags don't fire onSeek.
                                     if (canControl && previous !== null) {
