@@ -73,6 +73,12 @@ cp apps/web/.env.example apps/web/.env
 
 Edit each `.env` with your values.
 
+For YouTube search in Watch Party, set this in `apps/web/.env`:
+
+```bash
+VITE_RAPIDAPI_KEY=your_rapidapi_key
+```
+
 ### 3. Start infrastructure
 
 ```bash
@@ -248,3 +254,40 @@ SETNX radius:channel:{channelId}:speaker {userId}  (TTL: 30s)
 ## License
 
 MIT
+
+# 1. Install dependencies
+npm install
+
+# 2. Start all Docker services (MongoDB, Redis, Nginx, Backend, Prometheus, Grafana)
+npm run docker:up
+
+# 3. Access services
+# Backend:      http://localhost:3000
+# Frontend:     http://localhost:80
+# Redis Commander: http://localhost:8081
+# Prometheus:   http://localhost:9090
+# Grafana:      http://localhost:3001 (default: admin/admin)
+
+# 4. View logs
+docker-compose logs -f [service]  # Options: backend, mongodb, redis, nginx, prometheus, grafana
+
+# 5. Stop all services
+npm run docker:down
+
+# 6. Rebuild Docker images
+npm run docker:build
+
+# 7. Full rebuild (images + restart)
+docker-compose build && docker-compose up -d
+
+
+# Install Node.js 20+
+node --version  # Should be >= 20
+
+# Install MongoDB locally (macOS)
+brew install mongodb-community
+brew services start mongodb-community
+
+# Install Redis locally (macOS)
+brew install redis
+brew services start redis

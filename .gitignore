@@ -3,6 +3,12 @@ node_modules/
 .pnp
 .pnp.js
 
+# Package manager caches
+.npm/
+.pnpm-store/
+.yarn/cache/
+.yarn/unplugged/
+
 # Build outputs
 dist/
 build/
@@ -10,6 +16,7 @@ build/
 out/
 .expo/
 .expo-shared/
+storybook-static/
 
 # Environment files
 .env
@@ -19,9 +26,18 @@ out/
 .env.production.local
 .env.*.local
 
+# Any app/package env variants (keep examples)
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.*.example
+
 # Logs
 logs/
 *.log
+*.pid
+*.seed
+*.pid.lock
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -39,6 +55,7 @@ Thumbs.db
 
 # Editor
 .vscode/settings.json
+.vscode/*.code-workspace
 .idea/
 *.swp
 *.swo
@@ -46,6 +63,12 @@ Thumbs.db
 
 # Turbo
 .turbo/
+
+# Tool caches
+.cache/
+.parcel-cache/
+.eslintcache
+.stylelintcache
 
 # Coverage
 coverage/
@@ -56,6 +79,11 @@ coverage/
 
 # TypeScript
 *.tsbuildinfo
+
+# Local temp files
+tmp/
+temp/
+*.tmp
 
 # iOS / Android (mobile)
 apps/mobile/ios/

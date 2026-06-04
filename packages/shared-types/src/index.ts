@@ -89,6 +89,18 @@ export interface JwtPayload {
 // WebSocket events
 // ────────────────────────────────────────────────────────────
 
+export interface WebRtcSessionDescription {
+  type: 'offer' | 'answer' | 'pranswer' | 'rollback';
+  sdp?: string;
+}
+
+export interface WebRtcIceCandidate {
+  candidate?: string;
+  sdpMid?: string | null;
+  sdpMLineIndex?: number | null;
+  usernameFragment?: string | null;
+}
+
 // Client → Server
 export interface ClientEvents {
   'channel:join': { channelId: string };
@@ -96,9 +108,9 @@ export interface ClientEvents {
   'ptt:start': { channelId: string };
   'ptt:stop': { channelId: string };
   'location:update': { lat: number; lng: number };
-  'rtc:offer': { to: string; sdp: RTCSessionDescriptionInit };
-  'rtc:answer': { to: string; sdp: RTCSessionDescriptionInit };
-  'rtc:ice': { to: string; candidate: RTCIceCandidateInit };
+  'rtc:offer': { to: string; sdp: WebRtcSessionDescription };
+  'rtc:answer': { to: string; sdp: WebRtcSessionDescription };
+  'rtc:ice': { to: string; candidate: WebRtcIceCandidate };
 }
 
 // Server → Client
@@ -110,9 +122,9 @@ export interface ServerEvents {
   'channel:users': { channelId: string; users: string[] };
   'ptt:busy': { channelId: string; speakerId: string };
   'proximity:update': { channels: Channel[] };
-  'rtc:offer': { from: string; sdp: RTCSessionDescriptionInit };
-  'rtc:answer': { from: string; sdp: RTCSessionDescriptionInit };
-  'rtc:ice': { from: string; candidate: RTCIceCandidateInit };
+  'rtc:offer': { from: string; sdp: WebRtcSessionDescription };
+  'rtc:answer': { from: string; sdp: WebRtcSessionDescription };
+  'rtc:ice': { from: string; candidate: WebRtcIceCandidate };
   'presence:location_ack': { ok: boolean };
 }
 

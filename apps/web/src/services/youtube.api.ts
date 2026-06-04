@@ -117,19 +117,19 @@ export const youtubeApi = {
     const { data } = await axios.get<YouTubeSearchResponse & YouTube138SearchResponse>(
       `https://${apiHost}/search`,
       {
-      params: {
-        part: 'snippet',
-        type: 'video',
-        maxResults: '12',
-        q: query,
-        hl: 'en',
-        gl: 'US',
-      },
-      headers: {
-        'X-RapidAPI-Key': apiKey,
-        'X-RapidAPI-Host': apiHost,
-      },
-      timeout: 12_000,
+        params: {
+          part: 'snippet',
+          type: 'video',
+          maxResults: '12',
+          q: query,
+          hl: 'en',
+          gl: 'US',
+        },
+        headers: {
+          'X-RapidAPI-Key': apiKey,
+          'X-RapidAPI-Host': apiHost,
+        },
+        timeout: 12_000,
       },
     );
 

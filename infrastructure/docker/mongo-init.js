@@ -1,9 +1,14 @@
+// Create user for radius database
 db = db.getSiblingDB('radius');
 
 db.createUser({
   user: 'radius_app',
   pwd: 'radius_app_pass',
-  roles: [{ role: 'readWrite', db: 'radius' }],
+  roles: [
+    { role: 'readWrite', db: 'radius' },
+    { role: 'clusterMonitor', db: 'admin' },
+    { role: 'readAnyDatabase', db: 'admin' }
+  ],
 });
 
 db.createCollection('users');

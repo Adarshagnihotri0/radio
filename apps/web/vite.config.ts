@@ -10,7 +10,9 @@ export default defineConfig(({ mode }) => {
     envDir: __dirname,
     define: {
       'import.meta.env.VITE_RAPIDAPI_KEY': JSON.stringify(env.VITE_RAPIDAPI_KEY ?? ''),
-      'import.meta.env.VITE_RAPIDAPI_HOST': JSON.stringify(env.VITE_RAPIDAPI_HOST ?? 'youtube-v31.p.rapidapi.com'),
+      'import.meta.env.VITE_RAPIDAPI_HOST': JSON.stringify(
+        env.VITE_RAPIDAPI_HOST ?? 'youtube-v31.p.rapidapi.com',
+      ),
     },
     resolve: {
       alias: {
