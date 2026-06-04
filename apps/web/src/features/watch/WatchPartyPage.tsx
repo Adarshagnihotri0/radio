@@ -85,6 +85,9 @@ export function WatchPartyPage() {
     const followerPauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const latestMediaUpdatedAtRef = useRef<number>(0);
     const lastProgressWallClockRef = useRef<number>(0);
+    const hostBackgroundPlaybackRef = useRef(false);
+    const hostBackgroundPositionRef = useRef(0);
+    const hostBackgroundStartedAtRef = useRef(0);
 
     const [searchQuery, setSearchQuery] = useState('');
     const [searching, setSearching] = useState(false);
@@ -120,6 +123,15 @@ export function WatchPartyPage() {
             | undefined;
         const rate = internal?.getPlaybackRate?.();
         return typeof rate === 'number' && Number.isFinite(rate) ? rate : playbackRate;
+    };
+
+    const getHostBroadcastPosition = () => {
+        if (!hostBackgroundPlaybackRef.current) {
+            return getCurrentTime();
+        }
+
+        const elapsedSec = Math.max(0, (Date.now() - hostBackgroundStartedAtRef.current) / 1000);
+        return hostBackgroundPositionRef.current + elapsedSec * playbackRate;
     };
 
     useEffect(() => {
@@ -247,15 +259,45 @@ export function WatchPartyPage() {
     }, []);
 
     useEffect(() => {
+        const onVisibilityChange = () => {
+            if (!canControl) return;
+
+            if (document.hidden) {
+                if (isPlaying) {
+                    hostBackgroundPlaybackRef.current = true;
+                    hostBackgroundPositionRef.current = getCurrentTime();
+                    hostBackgroundStartedAtRef.current = Date.now();
+                }
+                return;
+            }
+
+            if (!hostBackgroundPlaybackRef.current) {
+                return;
+            }
+
+            const expected = getHostBroadcastPosition();
+            suppressNextSeekEventRef.current = true;
+            latestPositionRef.current = expected;
+            playerRef.current?.seekTo(Math.max(0, expected), 'seconds');
+            emitControl('room:media:seek', expected);
+            emitControl('room:media:play', expected);
+            hostBackgroundPlaybackRef.current = false;
+        };
+
+        document.addEventListener('visibilitychange', onVisibilityChange);
+        return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+    }, [canControl, isPlaying, playbackRate]);
+
+    useEffect(() => {
         if (!activeChannelId || !isHost || !mediaState) return;
 
         const socket = getSocket();
         const id = setInterval(() => {
             socket.emit('room:media:state', {
                 channelId: activeChannelId,
-                positionSec: getCurrentTime(),
+                positionSec: getHostBroadcastPosition(),
                 playbackRate: getCurrentPlaybackRate(),
-                isPlaying,
+                isPlaying: hostBackgroundPlaybackRef.current ? true : isPlaying,
             });
         }, 1000);
 
@@ -558,6 +600,9 @@ export function WatchPartyPage() {
                                 }}
                                 onPause={() => {
                                     if (canControl) {
+                                        if (document.hidden || hostBackgroundPlaybackRef.current) {
+                                            return;
+                                        }
                                         if (suppressNextPauseEventRef.current) {
                                             suppressNextPauseEventRef.current = false;
                                             return;
