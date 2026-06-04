@@ -93,10 +93,21 @@ export function WatchPartyPage() {
     const [currentVideoId, setCurrentVideoId] = useState<string | null>(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [playbackRate, setPlaybackRate] = useState(1);
+    const [followerAudioEnabled, setFollowerAudioEnabled] = useState(false);
 
     const isHost = Boolean(userId && hostUserId === userId);
     const canControl = Boolean(userId) && (!hostUserId || isHost);
+    const shouldMutePlayer = !canControl && !followerAudioEnabled;
     const hasRapidApiKey = youtubeApi.hasKey();
+
+    useEffect(() => {
+        // Non-host viewers often require an explicit gesture before audio can play.
+        if (canControl) {
+            setFollowerAudioEnabled(true);
+            return;
+        }
+        setFollowerAudioEnabled(false);
+    }, [canControl, activeChannelId, currentVideoId]);
 
     const getCurrentTime = () => playerRef.current?.getCurrentTime() ?? 0;
 
@@ -191,7 +202,7 @@ export function WatchPartyPage() {
 
         if (!isHost && playerReady) {
             const drift = expectedPosition - latestPositionRef.current;
-            if (needsInitialSyncRef.current || Math.abs(drift) > 0.5) {
+            if (needsInitialSyncRef.current || Math.abs(drift) > 3) {
                 playerRef.current?.seekTo(Math.max(0, expectedPosition), 'seconds');
                 needsInitialSyncRef.current = false;
             }
@@ -209,7 +220,7 @@ export function WatchPartyPage() {
                 playbackRate: getCurrentPlaybackRate(),
                 isPlaying,
             });
-        }, 500);
+        }, 1000);
 
         return () => clearInterval(id);
     }, [activeChannelId, isHost, mediaState, isPlaying, playbackRate]);
@@ -223,32 +234,32 @@ export function WatchPartyPage() {
                 : mediaState.positionSec;
 
             const drift = expectedPosition - latestPositionRef.current;
-            if (!mediaState.isPlaying && Math.abs(drift) > 0.2) {
+            if (!mediaState.isPlaying && Math.abs(drift) > 0.6) {
                 playerRef.current?.seekTo(Math.max(0, expectedPosition), 'seconds');
                 latestPositionRef.current = Math.max(0, expectedPosition);
                 setPlaybackRate(mediaState.playbackRate);
                 return;
             }
 
-            if (Math.abs(drift) > 2.5) {
+            if (Math.abs(drift) > 4) {
                 playerRef.current?.seekTo(Math.max(0, expectedPosition), 'seconds');
                 latestPositionRef.current = Math.max(0, expectedPosition);
                 setPlaybackRate(mediaState.playbackRate);
                 return;
             }
 
-            if (Math.abs(drift) > 0.35) {
+            if (Math.abs(drift) > 1.2) {
                 const correctedRate = drift > 0
-                    ? Math.min(mediaState.playbackRate + 0.08, 1.15)
-                    : Math.max(mediaState.playbackRate - 0.08, 0.85);
+                    ? Math.min(mediaState.playbackRate + 0.04, 1.05)
+                    : Math.max(mediaState.playbackRate - 0.04, 0.95);
                 setPlaybackRate(correctedRate);
                 return;
             }
 
-            if (Math.abs(drift) < 0.12 && playbackRate !== mediaState.playbackRate) {
+            if (Math.abs(drift) < 0.25 && playbackRate !== mediaState.playbackRate) {
                 setPlaybackRate(mediaState.playbackRate);
             }
-        }, 1000);
+        }, 1500);
 
         return () => clearInterval(id);
     }, [mediaState, playerReady, canControl, playbackRate]);
@@ -439,8 +450,9 @@ export function WatchPartyPage() {
                 </div>
 
                 <div className="space-y-4">
-                    <div className="rounded-xl overflow-hidden border border-gray-800 bg-black aspect-video">
+                    <div className="relative rounded-xl overflow-hidden border border-gray-800 bg-black aspect-video">
                         {currentVideoId ? (
+                            <>
                             <ReactPlayer
                                 ref={playerRef}
                                 url={`https://www.youtube.com/watch?v=${currentVideoId}`}
@@ -449,6 +461,7 @@ export function WatchPartyPage() {
                                 controls={canControl}
                                 playing={isPlaying}
                                 playbackRate={playbackRate}
+                                muted={shouldMutePlayer}
                                 onReady={() => {
                                     setPlayerReady(true);
 
@@ -520,6 +533,15 @@ export function WatchPartyPage() {
                                     toast.error(message);
                                 }}
                             />
+                            {!canControl && shouldMutePlayer && (
+                                <button
+                                    onClick={() => setFollowerAudioEnabled(true)}
+                                    className="absolute bottom-3 right-3 z-10 px-3 py-2 text-xs rounded-md bg-radar-700 hover:bg-radar-600 text-white transition-colors"
+                                >
+                                    Enable audio
+                                </button>
+                            )}
+                            </>
                         ) : (
                             <div className="w-full h-full flex items-center justify-center text-gray-500 text-sm">
                                 Select a video from search results.
