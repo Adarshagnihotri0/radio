@@ -39,6 +39,7 @@ export function WatchPartyPage() {
     const playerRef = useRef<ReactPlayer | null>(null);
     const loadedVideoIdRef = useRef<string | null>(null);
     const latestPositionRef = useRef(0);
+    const needsInitialSyncRef = useRef(true);
 
     const [searchQuery, setSearchQuery] = useState('');
     const [searching, setSearching] = useState(false);
@@ -137,6 +138,8 @@ export function WatchPartyPage() {
         if (loadedVideoIdRef.current !== mediaState.videoId) {
             loadedVideoIdRef.current = mediaState.videoId;
             setCurrentVideoId(mediaState.videoId);
+            latestPositionRef.current = 0;
+            needsInitialSyncRef.current = true;
             setPlayerReady(false);
         }
 
@@ -145,8 +148,9 @@ export function WatchPartyPage() {
 
         if (!isHost && playerReady) {
             const drift = expectedPosition - latestPositionRef.current;
-            if (Math.abs(drift) > 0.5) {
+            if (needsInitialSyncRef.current || Math.abs(drift) > 0.5) {
                 playerRef.current?.seekTo(Math.max(0, expectedPosition), 'seconds');
+                needsInitialSyncRef.current = false;
             }
         }
     }, [activeChannelId, mediaState, isHost, playerReady]);
@@ -352,7 +356,19 @@ export function WatchPartyPage() {
                                 controls
                                 playing={isPlaying}
                                 playbackRate={playbackRate}
-                                onReady={() => setPlayerReady(true)}
+                                onReady={() => {
+                                    setPlayerReady(true);
+
+                                    if (!isHost && mediaState) {
+                                        const expectedPosition = mediaState.isPlaying
+                                            ? mediaState.positionSec +
+                                              (Date.now() - mediaState.updatedAtMs) / 1000
+                                            : mediaState.positionSec;
+
+                                        playerRef.current?.seekTo(Math.max(0, expectedPosition), 'seconds');
+                                        needsInitialSyncRef.current = false;
+                                    }
+                                }}
                                 onProgress={({ playedSeconds }) => {
                                     latestPositionRef.current = playedSeconds;
                                 }}
