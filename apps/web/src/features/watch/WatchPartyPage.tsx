@@ -26,6 +26,43 @@ interface MediaSyncEvent {
     mediaState: MediaState;
 }
 
+function extractYouTubeVideoId(input: string): string | null {
+    const value = input.trim();
+    if (!value) return null;
+
+    // Raw video IDs are 11 chars.
+    if (/^[a-zA-Z0-9_-]{11}$/.test(value)) {
+        return value;
+    }
+
+    try {
+        const url = new URL(value);
+        const host = url.hostname.replace(/^www\./, '').toLowerCase();
+
+        if (host === 'youtu.be') {
+            const candidate = url.pathname.split('/').filter(Boolean)[0];
+            return candidate && /^[a-zA-Z0-9_-]{11}$/.test(candidate) ? candidate : null;
+        }
+
+        if (host.endsWith('youtube.com')) {
+            const v = url.searchParams.get('v');
+            if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) {
+                return v;
+            }
+
+            const parts = url.pathname.split('/').filter(Boolean);
+            const embedIndex = parts.findIndex((p) => p === 'embed' || p === 'shorts' || p === 'live');
+            if (embedIndex >= 0 && parts[embedIndex + 1] && /^[a-zA-Z0-9_-]{11}$/.test(parts[embedIndex + 1])) {
+                return parts[embedIndex + 1];
+            }
+        }
+    } catch {
+        return null;
+    }
+
+    return null;
+}
+
 export function WatchPartyPage() {
     const activeChannelId = useChannelStore((s) => s.activeChannelId);
     const channels = useChannelStore((s) => s.channels);
@@ -200,6 +237,14 @@ export function WatchPartyPage() {
             toast.error('Enter a search query');
             return;
         }
+
+        const directVideoId = extractYouTubeVideoId(query);
+        if (directVideoId) {
+            loadVideoAsHost(directVideoId);
+            setSearchResults([]);
+            return;
+        }
+
         if (!hasRapidApiKey) {
             toast.error('Missing VITE_RAPIDAPI_KEY. Add it in apps/web/.env and restart web:dev');
             return;
