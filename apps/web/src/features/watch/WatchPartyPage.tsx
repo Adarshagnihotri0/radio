@@ -77,6 +77,10 @@ export function WatchPartyPage() {
     const loadedVideoIdRef = useRef<string | null>(null);
     const latestPositionRef = useRef(0);
     const needsInitialSyncRef = useRef(true);
+    const suppressNextPlayEventRef = useRef(false);
+    const suppressNextPauseEventRef = useRef(false);
+    const suppressNextSeekEventRef = useRef(false);
+    const lastSeekEmitAtRef = useRef(0);
 
     const [searchQuery, setSearchQuery] = useState('');
     const [searching, setSearching] = useState(false);
@@ -203,7 +207,7 @@ export function WatchPartyPage() {
                 playbackRate: getCurrentPlaybackRate(),
                 isPlaying,
             });
-        }, 2000);
+        }, 500);
 
         return () => clearInterval(id);
     }, [activeChannelId, isHost, mediaState, isPlaying, playbackRate]);
@@ -217,14 +221,35 @@ export function WatchPartyPage() {
                 : mediaState.positionSec;
 
             const drift = expectedPosition - latestPositionRef.current;
-            if (Math.abs(drift) > 0.35) {
+            if (!mediaState.isPlaying && Math.abs(drift) > 0.2) {
                 playerRef.current?.seekTo(Math.max(0, expectedPosition), 'seconds');
                 latestPositionRef.current = Math.max(0, expectedPosition);
+                setPlaybackRate(mediaState.playbackRate);
+                return;
+            }
+
+            if (Math.abs(drift) > 2.5) {
+                playerRef.current?.seekTo(Math.max(0, expectedPosition), 'seconds');
+                latestPositionRef.current = Math.max(0, expectedPosition);
+                setPlaybackRate(mediaState.playbackRate);
+                return;
+            }
+
+            if (Math.abs(drift) > 0.35) {
+                const correctedRate = drift > 0
+                    ? Math.min(mediaState.playbackRate + 0.08, 1.15)
+                    : Math.max(mediaState.playbackRate - 0.08, 0.85);
+                setPlaybackRate(correctedRate);
+                return;
+            }
+
+            if (Math.abs(drift) < 0.12 && playbackRate !== mediaState.playbackRate) {
+                setPlaybackRate(mediaState.playbackRate);
             }
         }, 1000);
 
         return () => clearInterval(id);
-    }, [mediaState, playerReady, canControl]);
+    }, [mediaState, playerReady, canControl, playbackRate]);
 
     const loadVideoAsHost = (videoId: string) => {
         if (!activeChannelId) return;
@@ -297,12 +322,14 @@ export function WatchPartyPage() {
 
     const playAsHost = () => {
         if (!canControl) return;
+        suppressNextPlayEventRef.current = true;
         setIsPlaying(true);
         emitControl('room:media:play');
     };
 
     const pauseAsHost = () => {
         if (!canControl) return;
+        suppressNextPauseEventRef.current = true;
         setIsPlaying(false);
         emitControl('room:media:pause');
     };
@@ -311,6 +338,7 @@ export function WatchPartyPage() {
         if (!canControl) return;
 
         const next = Math.max(0, getCurrentTime() + delta);
+        suppressNextSeekEventRef.current = true;
         latestPositionRef.current = next;
         playerRef.current?.seekTo(next, 'seconds');
         emitControl('room:media:seek', next);
@@ -438,17 +466,35 @@ export function WatchPartyPage() {
                                 onSeek={(seconds) => {
                                     latestPositionRef.current = seconds;
                                     if (canControl) {
+                                        if (suppressNextSeekEventRef.current) {
+                                            suppressNextSeekEventRef.current = false;
+                                            return;
+                                        }
+
+                                        const now = Date.now();
+                                        if (now - lastSeekEmitAtRef.current < 250) {
+                                            return;
+                                        }
+                                        lastSeekEmitAtRef.current = now;
                                         emitControl('room:media:seek', seconds);
                                     }
                                 }}
                                 onPlay={() => {
                                     if (canControl) {
+                                        if (suppressNextPlayEventRef.current) {
+                                            suppressNextPlayEventRef.current = false;
+                                            return;
+                                        }
                                         setIsPlaying(true);
                                         emitControl('room:media:play');
                                     }
                                 }}
                                 onPause={() => {
                                     if (canControl) {
+                                        if (suppressNextPauseEventRef.current) {
+                                            suppressNextPauseEventRef.current = false;
+                                            return;
+                                        }
                                         setIsPlaying(false);
                                         emitControl('room:media:pause');
                                     }
