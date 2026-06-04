@@ -81,6 +81,7 @@ export function WatchPartyPage() {
     const suppressNextPauseEventRef = useRef(false);
     const suppressNextSeekEventRef = useRef(false);
     const lastSeekEmitAtRef = useRef(0);
+    const lastProgressPositionRef = useRef<number | null>(null);
 
     const [searchQuery, setSearchQuery] = useState('');
     const [searching, setSearching] = useState(false);
@@ -180,6 +181,7 @@ export function WatchPartyPage() {
             loadedVideoIdRef.current = mediaState.videoId;
             setCurrentVideoId(mediaState.videoId);
             latestPositionRef.current = 0;
+            lastProgressPositionRef.current = null;
             needsInitialSyncRef.current = true;
             setPlayerReady(false);
         }
@@ -461,7 +463,21 @@ export function WatchPartyPage() {
                                     }
                                 }}
                                 onProgress={({ playedSeconds }) => {
+                                    const previous = lastProgressPositionRef.current;
                                     latestPositionRef.current = playedSeconds;
+                                    lastProgressPositionRef.current = playedSeconds;
+
+                                    // Fallback for YouTube iframe: some seekbar drags don't fire onSeek.
+                                    if (canControl && previous !== null) {
+                                        const jumpDelta = Math.abs(playedSeconds - previous);
+                                        if (jumpDelta > 2.5) {
+                                            const now = Date.now();
+                                            if (now - lastSeekEmitAtRef.current >= 250) {
+                                                lastSeekEmitAtRef.current = now;
+                                                emitControl('room:media:seek', playedSeconds);
+                                            }
+                                        }
+                                    }
                                 }}
                                 onSeek={(seconds) => {
                                     latestPositionRef.current = seconds;
