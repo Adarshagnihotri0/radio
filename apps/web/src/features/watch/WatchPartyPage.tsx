@@ -208,6 +208,24 @@ export function WatchPartyPage() {
         return () => clearInterval(id);
     }, [activeChannelId, isHost, mediaState, isPlaying, playbackRate]);
 
+    useEffect(() => {
+        if (!mediaState || !playerReady || canControl) return;
+
+        const id = setInterval(() => {
+            const expectedPosition = mediaState.isPlaying
+                ? mediaState.positionSec + (Date.now() - mediaState.updatedAtMs) / 1000
+                : mediaState.positionSec;
+
+            const drift = expectedPosition - latestPositionRef.current;
+            if (Math.abs(drift) > 0.35) {
+                playerRef.current?.seekTo(Math.max(0, expectedPosition), 'seconds');
+                latestPositionRef.current = Math.max(0, expectedPosition);
+            }
+        }, 1000);
+
+        return () => clearInterval(id);
+    }, [mediaState, playerReady, canControl]);
+
     const loadVideoAsHost = (videoId: string) => {
         if (!activeChannelId) return;
 
@@ -398,7 +416,7 @@ export function WatchPartyPage() {
                                 url={`https://www.youtube.com/watch?v=${currentVideoId}`}
                                 width="100%"
                                 height="100%"
-                                controls
+                                controls={canControl}
                                 playing={isPlaying}
                                 playbackRate={playbackRate}
                                 onReady={() => {
