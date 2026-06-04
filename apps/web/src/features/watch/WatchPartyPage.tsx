@@ -91,6 +91,9 @@ export function WatchPartyPage() {
     const hostBackgroundPositionRef = useRef(0);
     const hostBackgroundStartedAtRef = useRef(0);
     const outboundSequenceRef = useRef(0);
+    const hostControlPositionRef = useRef<number | null>(null);
+    const hostControlWallClockRef = useRef(0);
+    const hostControlIsPlayingRef = useRef<boolean | null>(null);
 
     const [searchQuery, setSearchQuery] = useState('');
     const [searching, setSearching] = useState(false);
@@ -108,6 +111,7 @@ export function WatchPartyPage() {
     const canControl = Boolean(userId) && (!hostUserId || isHost);
     const shouldMutePlayer = !canControl && !followerAudioEnabled;
     const hasRapidApiKey = youtubeApi.hasKey();
+    const isDebugMode = typeof window !== 'undefined' && window.location.hostname === 'localhost';
 
     useEffect(() => {
         // Non-host viewers often require an explicit gesture before audio can play.
@@ -130,7 +134,21 @@ export function WatchPartyPage() {
 
     const getHostBroadcastPosition = () => {
         if (!hostBackgroundPlaybackRef.current) {
-            return getCurrentTime();
+            const controlPosition = hostControlPositionRef.current;
+            if (controlPosition !== null) {
+                const elapsedSec = Math.max(0, (Date.now() - hostControlWallClockRef.current) / 1000);
+                const shouldAdvance = hostControlIsPlayingRef.current ?? isPlaying;
+                if (elapsedSec <= 1.5) {
+                    return shouldAdvance ? controlPosition + elapsedSec * playbackRate : controlPosition;
+                }
+                hostControlPositionRef.current = null;
+            }
+
+            const current = getCurrentTime();
+            if (Number.isFinite(current) && current > 0) {
+                return current;
+            }
+            return latestPositionRef.current;
         }
 
         const elapsedSec = Math.max(0, (Date.now() - hostBackgroundStartedAtRef.current) / 1000);
@@ -166,16 +184,22 @@ export function WatchPartyPage() {
 
             latestMediaSequenceRef.current = event.mediaState.sequence;
             outboundSequenceRef.current = Math.max(outboundSequenceRef.current, event.mediaState.sequence);
-            setHostUserId(event.hostUserId);
-            setMediaState(event.mediaState);
-        };
 
-        const handleMediaSet = (event: MediaSyncEvent) => {
-            if (event.channelId !== activeChannelId) return;
-            applyMediaEvent(event);
-            if (event.mediaState.updatedByUserId === userId) {
+            if (isDebugMode) {
+                console.log(
+                    'STATE',
+                    event.mediaState.sequence,
+                    event.mediaState.positionSec,
+                    event.mediaState.isPlaying,
+                );
+            }
+
+            if (event.mediaState.updatedByUserId === userId && event.mediaState.videoId !== loadedVideoIdRef.current) {
                 toast.success('Video loaded for the room');
             }
+
+            setHostUserId(event.hostUserId);
+            setMediaState(event.mediaState);
         };
 
         const handleHostLeft = ({ channelId }: { channelId: string }) => {
@@ -194,22 +218,36 @@ export function WatchPartyPage() {
             toast.error('Only the host can control playback');
         };
 
+        const handleMediaAck = (ack: {
+            channelId: string;
+            sequence: number;
+            accepted: boolean;
+            serverUpdatedAt: number;
+            reason?: string;
+        }) => {
+            if (ack.channelId !== activeChannelId) return;
+            if (isDebugMode) {
+                console.log('ACK', ack.sequence, ack.accepted, ack.reason ?? 'ok', ack.serverUpdatedAt);
+            }
+            if (!ack.accepted && ack.reason) {
+                toast.error(`Media update rejected (${ack.reason})`);
+            }
+        };
+
         socket.on('room:media:state', applyMediaEvent);
-        socket.on('room:media:sync', applyMediaEvent);
-        socket.on('room:media:set', handleMediaSet);
         socket.on('room:media:host_left', handleHostLeft);
         socket.on('room:media:host_taken', handleHostTaken);
         socket.on('room:media:not_host', handleNotHost);
+        socket.on('room:media:ack', handleMediaAck);
 
         return () => {
             socket.off('connect', onConnect);
             socket.off('disconnect', onDisconnect);
             socket.off('room:media:state', applyMediaEvent);
-            socket.off('room:media:sync', applyMediaEvent);
-            socket.off('room:media:set', handleMediaSet);
             socket.off('room:media:host_left', handleHostLeft);
             socket.off('room:media:host_taken', handleHostTaken);
             socket.off('room:media:not_host', handleNotHost);
+            socket.off('room:media:ack', handleMediaAck);
         };
     }, [activeChannelId, userId]);
 
@@ -375,6 +413,7 @@ export function WatchPartyPage() {
             return;
         }
 
+        const sequence = nextOutboundSequence();
         getSocket().emit('room:media:set', {
             channelId: activeChannelId,
             provider: 'youtube',
@@ -382,8 +421,12 @@ export function WatchPartyPage() {
             positionSec: 0,
             isPlaying: false,
             playbackRate: 1,
-            sequence: nextOutboundSequence(),
+            sequence,
         });
+
+        if (isDebugMode) {
+            console.log('SEND', sequence, 0, false);
+        }
     };
 
     const searchYouTube = async () => {
@@ -425,12 +468,27 @@ export function WatchPartyPage() {
     ) => {
         if (!activeChannelId || !canControl) return;
 
+        const sentPosition = positionSec ?? getCurrentTime();
+        const sequence = nextOutboundSequence();
+
         getSocket().emit(event, {
             channelId: activeChannelId,
-            positionSec: positionSec ?? getCurrentTime(),
+            positionSec: sentPosition,
             playbackRate: getCurrentPlaybackRate(),
-            sequence: nextOutboundSequence(),
+            sequence,
         });
+
+        hostControlPositionRef.current = sentPosition;
+        hostControlWallClockRef.current = Date.now();
+        hostControlIsPlayingRef.current = event === 'room:media:play'
+            ? true
+            : event === 'room:media:pause'
+                ? false
+                : isPlaying;
+
+        if (isDebugMode) {
+            console.log('SEND', sequence, sentPosition, hostControlIsPlayingRef.current ?? isPlaying);
+        }
     };
 
     const playAsHost = () => {
@@ -581,6 +639,13 @@ export function WatchPartyPage() {
                                         lastProgressPositionRef.current = playedSeconds;
                                         lastProgressWallClockRef.current = Date.now();
 
+                                        if (
+                                            hostControlPositionRef.current !== null
+                                            && Math.abs(playedSeconds - hostControlPositionRef.current) < 1.2
+                                        ) {
+                                            hostControlPositionRef.current = null;
+                                        }
+
                                         // Fallback for YouTube iframe: some seekbar drags don't fire onSeek.
                                         if (canControl && previous !== null) {
                                             const jumpDelta = Math.abs(playedSeconds - previous);
@@ -588,6 +653,9 @@ export function WatchPartyPage() {
                                                 const now = Date.now();
                                                 if (now - lastSeekEmitAtRef.current >= 250) {
                                                     lastSeekEmitAtRef.current = now;
+                                                    hostControlPositionRef.current = playedSeconds;
+                                                    hostControlWallClockRef.current = now;
+                                                    hostControlIsPlayingRef.current = isPlaying;
                                                     emitControl('room:media:seek', playedSeconds);
                                                 }
                                             }
@@ -606,6 +674,9 @@ export function WatchPartyPage() {
                                                 return;
                                             }
                                             lastSeekEmitAtRef.current = now;
+                                            hostControlPositionRef.current = seconds;
+                                            hostControlWallClockRef.current = now;
+                                            hostControlIsPlayingRef.current = isPlaying;
                                             emitControl('room:media:seek', seconds);
                                         }
                                     }}

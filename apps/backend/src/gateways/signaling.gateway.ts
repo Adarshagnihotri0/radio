@@ -90,6 +90,14 @@ interface MediaStatePayload {
   sequence?: number;
 }
 
+interface MediaAckPayload {
+  channelId: string;
+  sequence: number;
+  accepted: boolean;
+  serverUpdatedAt: number;
+  reason?: string;
+}
+
 @WebSocketGateway({
   cors: {
     origin: '*',
@@ -329,6 +337,14 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 
     if (existingHost && existingHost !== client.userId) {
       client.emit('room:media:host_taken', { channelId, hostUserId: existingHost });
+      const rejectedAck: MediaAckPayload = {
+        channelId,
+        sequence: this.sanitizeSequence(payload.sequence, 1),
+        accepted: false,
+        serverUpdatedAt: Date.now(),
+        reason: 'host_taken',
+      };
+      client.emit('room:media:ack', rejectedAck);
       return;
     }
 
@@ -355,6 +371,14 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
       hostUserId,
       mediaState,
     });
+
+    const ack: MediaAckPayload = {
+      channelId,
+      sequence: mediaState.sequence,
+      accepted: true,
+      serverUpdatedAt: mediaState.updatedAtMs,
+    };
+    client.emit('room:media:ack', ack);
   }
 
   @SubscribeMessage('room:media:play')
@@ -574,6 +598,14 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
     const hostUserId = await this.redisService.get(this.mediaHostKey(channelId));
     if (!hostUserId || hostUserId !== client.userId) {
       client.emit('room:media:not_host', { channelId, hostUserId });
+      const rejectedAck: MediaAckPayload = {
+        channelId,
+        sequence: this.sanitizeSequence(patch.sequence, 1),
+        accepted: false,
+        serverUpdatedAt: Date.now(),
+        reason: 'not_host',
+      };
+      client.emit('room:media:ack', rejectedAck);
       return;
     }
 
@@ -584,6 +616,14 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 
     const nextSequence = this.sanitizeSequence(patch.sequence, existing.sequence + 1);
     if (nextSequence <= existing.sequence) {
+      const rejectedAck: MediaAckPayload = {
+        channelId,
+        sequence: nextSequence,
+        accepted: false,
+        serverUpdatedAt: Date.now(),
+        reason: 'stale_sequence',
+      };
+      client.emit('room:media:ack', rejectedAck);
       return;
     }
 
@@ -612,6 +652,14 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
       hostUserId,
       mediaState,
     });
+
+    const ack: MediaAckPayload = {
+      channelId,
+      sequence: mediaState.sequence,
+      accepted: true,
+      serverUpdatedAt: mediaState.updatedAtMs,
+    };
+    client.emit('room:media:ack', ack);
   }
 
   /**
