@@ -46,6 +46,7 @@ export function ChannelsPage() {
     const [loc, setLoc] = useState<LocState>({ status: 'idle' });
     const [radiusKm, setRadiusKm] = useState(25);
     const [creating, setCreating] = useState(false);
+    const [pendingJoinChannelId, setPendingJoinChannelId] = useState<string | null>(null);
 
     useEffect(() => {
         if (data?.data) setChannels(data.data);
@@ -62,14 +63,56 @@ export function ChannelsPage() {
         );
     }, [showCreate]);
 
+    useEffect(() => {
+        const socket = getSocket();
+
+        const onJoined = ({ channelId }: { channelId: string }) => {
+            if (!pendingJoinChannelId || pendingJoinChannelId !== channelId) return;
+            setActiveChannel(channelId);
+            setPendingJoinChannelId(null);
+
+            const channel = data?.data?.find((item) => item._id === channelId);
+            if (channel) {
+                toast.success(`Joined ${channel.name}`, { icon: '📡' });
+            }
+        };
+
+        const onJoinFailed = ({ channelId, reason }: { channelId: string; reason?: string }) => {
+            if (!pendingJoinChannelId || pendingJoinChannelId !== channelId) return;
+            setPendingJoinChannelId(null);
+            toast.error(reason ?? 'Unable to join channel');
+        };
+
+        socket.on('channel:joined', onJoined);
+        socket.on('channel:join_failed', onJoinFailed);
+
+        return () => {
+            socket.off('channel:joined', onJoined);
+            socket.off('channel:join_failed', onJoinFailed);
+        };
+    }, [pendingJoinChannelId, setActiveChannel, data?.data]);
+
+    useEffect(() => {
+        if (!pendingJoinChannelId) return;
+        const timeoutId = window.setTimeout(() => {
+            setPendingJoinChannelId(null);
+            toast.error('Channel join timed out');
+        }, 5000);
+
+        return () => window.clearTimeout(timeoutId);
+    }, [pendingJoinChannelId]);
+
     const joinChannel = (channel: Channel) => {
+        if (pendingJoinChannelId) {
+            return;
+        }
+
         const socket = getSocket();
         if (activeChannelId && activeChannelId !== channel._id) {
             socket.emit('channel:leave', { channelId: activeChannelId });
         }
+        setPendingJoinChannelId(channel._id);
         socket.emit('channel:join', { channelId: channel._id });
-        setActiveChannel(channel._id);
-        toast.success(`Joined ${channel.name}`, { icon: '📡' });
     };
 
     const leaveChannel = (channel: Channel) => {
@@ -217,10 +260,11 @@ export function ChannelsPage() {
                                     ) : (
                                         <button
                                             onClick={() => joinChannel(channel)}
+                                            disabled={Boolean(pendingJoinChannelId)}
                                             className="flex items-center gap-1 px-2.5 py-1 rounded text-xs bg-radar-800 hover:bg-radar-700 text-radar-300 transition-colors"
                                         >
                                             <LogIn size={11} />
-                                            Join
+                                            {pendingJoinChannelId === channel._id ? 'Joining...' : 'Join'}
                                         </button>
                                     )}
                                 </div>

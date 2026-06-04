@@ -1,5 +1,6 @@
 import { io, Socket } from 'socket.io-client';
 import { useAuthStore } from '@/stores/auth.store';
+import { useChannelStore } from '@/stores/channel.store';
 import toast from 'react-hot-toast';
 
 let socket: Socket | null = null;
@@ -17,6 +18,10 @@ export function getSocket(): Socket {
 
     socket.on('connect', () => {
       console.warn('[Socket] Connected:', socket?.id);
+      const activeChannelId = useChannelStore.getState().activeChannelId;
+      if (activeChannelId) {
+        socket?.emit('channel:join', { channelId: activeChannelId });
+      }
     });
 
     socket.on('disconnect', (reason) => {

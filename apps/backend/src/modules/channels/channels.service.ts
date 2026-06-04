@@ -74,7 +74,7 @@ export class ChannelsService {
   async update(id: string, dto: UpdateChannelDto, userId: string): Promise<ChannelDocument> {
     const channel = await this.findById(id);
 
-    if (channel.createdBy.toString() !== userId) {
+    if (this.getCreatorId(channel.createdBy) !== userId) {
       throw new ForbiddenException('Only the channel creator can update it');
     }
 
@@ -93,7 +93,7 @@ export class ChannelsService {
   async remove(id: string, userId: string): Promise<void> {
     const channel = await this.findById(id);
 
-    if (channel.createdBy.toString() !== userId) {
+    if (this.getCreatorId(channel.createdBy) !== userId) {
       throw new ForbiddenException('Only the channel creator can delete it');
     }
 
@@ -102,7 +102,18 @@ export class ChannelsService {
 
   async incrementActiveUsers(channelId: string, delta: 1 | -1): Promise<void> {
     await this.channelModel
-      .findByIdAndUpdate(channelId, { $inc: { activeUsers: delta } })
+      .findByIdAndUpdate(
+        channelId,
+        [
+          {
+            $set: {
+              activeUsers: {
+                $max: [0, { $add: ['$activeUsers', delta] }],
+              },
+            },
+          },
+        ],
+      )
       .exec();
   }
 
@@ -124,5 +135,33 @@ export class ChannelsService {
     const a =
       Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  private getCreatorId(createdBy: unknown): string {
+    if (createdBy instanceof Types.ObjectId) {
+      return createdBy.toString();
+    }
+
+    if (createdBy && typeof createdBy === 'object') {
+      const candidate = createdBy as { _id?: unknown; toString?: () => string };
+      if (candidate._id instanceof Types.ObjectId) {
+        return candidate._id.toString();
+      }
+      if (typeof candidate._id === 'string') {
+        return candidate._id;
+      }
+      if (typeof candidate.toString === 'function') {
+        const value = candidate.toString();
+        if (value && value !== '[object Object]') {
+          return value;
+        }
+      }
+    }
+
+    if (typeof createdBy === 'string') {
+      return createdBy;
+    }
+
+    return '';
   }
 }

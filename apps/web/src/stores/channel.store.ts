@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 
 interface Channel {
   _id: string;
@@ -22,14 +23,22 @@ interface ChannelStore {
   setCurrentSpeaker: (userId: string | null) => void;
 }
 
-export const useChannelStore = create<ChannelStore>((set) => ({
-  channels: [],
-  activeChannelId: null,
-  speaking: false,
-  currentSpeakerId: null,
+export const useChannelStore = create<ChannelStore>()(
+  persist(
+    (set) => ({
+      channels: [],
+      activeChannelId: null,
+      speaking: false,
+      currentSpeakerId: null,
 
-  setChannels: (channels) => set({ channels }),
-  setActiveChannel: (channelId) => set({ activeChannelId: channelId }),
-  setSpeaking: (speaking) => set({ speaking }),
-  setCurrentSpeaker: (userId) => set({ currentSpeakerId: userId }),
-}));
+      setChannels: (channels) => set({ channels }),
+      setActiveChannel: (channelId) => set({ activeChannelId: channelId }),
+      setSpeaking: (speaking) => set({ speaking }),
+      setCurrentSpeaker: (userId) => set({ currentSpeakerId: userId }),
+    }),
+    {
+      name: 'radius-channel-store',
+      partialize: (state) => ({ activeChannelId: state.activeChannelId }),
+    },
+  ),
+);

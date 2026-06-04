@@ -16,6 +16,7 @@ interface MediaState {
     isPlaying: boolean;
     positionSec: number;
     playbackRate: number;
+    sequence: number;
     updatedAtMs: number;
     updatedByUserId: string;
 }
@@ -84,10 +85,12 @@ export function WatchPartyPage() {
     const lastProgressPositionRef = useRef<number | null>(null);
     const followerPauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const latestMediaUpdatedAtRef = useRef<number>(0);
+    const latestMediaSequenceRef = useRef<number>(0);
     const lastProgressWallClockRef = useRef<number>(0);
     const hostBackgroundPlaybackRef = useRef(false);
     const hostBackgroundPositionRef = useRef(0);
     const hostBackgroundStartedAtRef = useRef(0);
+    const outboundSequenceRef = useRef(0);
 
     const [searchQuery, setSearchQuery] = useState('');
     const [searching, setSearching] = useState(false);
@@ -134,7 +137,15 @@ export function WatchPartyPage() {
         return hostBackgroundPositionRef.current + elapsedSec * playbackRate;
     };
 
+    const nextOutboundSequence = () => {
+        outboundSequenceRef.current += 1;
+        return outboundSequenceRef.current;
+    };
+
     useEffect(() => {
+        latestMediaSequenceRef.current = 0;
+        outboundSequenceRef.current = 0;
+
         if (!activeChannelId) {
             setHostUserId(null);
             setMediaState(null);
@@ -151,6 +162,10 @@ export function WatchPartyPage() {
 
         const applyMediaEvent = (event: MediaSyncEvent) => {
             if (event.channelId !== activeChannelId) return;
+            if (event.mediaState.sequence < latestMediaSequenceRef.current) return;
+
+            latestMediaSequenceRef.current = event.mediaState.sequence;
+            outboundSequenceRef.current = Math.max(outboundSequenceRef.current, event.mediaState.sequence);
             setHostUserId(event.hostUserId);
             setMediaState(event.mediaState);
         };
@@ -179,6 +194,7 @@ export function WatchPartyPage() {
             toast.error('Only the host can control playback');
         };
 
+        socket.on('room:media:state', applyMediaEvent);
         socket.on('room:media:sync', applyMediaEvent);
         socket.on('room:media:set', handleMediaSet);
         socket.on('room:media:host_left', handleHostLeft);
@@ -188,6 +204,7 @@ export function WatchPartyPage() {
         return () => {
             socket.off('connect', onConnect);
             socket.off('disconnect', onDisconnect);
+            socket.off('room:media:state', applyMediaEvent);
             socket.off('room:media:sync', applyMediaEvent);
             socket.off('room:media:set', handleMediaSet);
             socket.off('room:media:host_left', handleHostLeft);
@@ -204,6 +221,7 @@ export function WatchPartyPage() {
             : mediaState.positionSec;
 
         latestMediaUpdatedAtRef.current = mediaState.updatedAtMs;
+        latestMediaSequenceRef.current = mediaState.sequence;
 
         if (loadedVideoIdRef.current !== mediaState.videoId) {
             loadedVideoIdRef.current = mediaState.videoId;
@@ -298,6 +316,7 @@ export function WatchPartyPage() {
                 positionSec: getHostBroadcastPosition(),
                 playbackRate: getCurrentPlaybackRate(),
                 isPlaying: hostBackgroundPlaybackRef.current ? true : isPlaying,
+                sequence: nextOutboundSequence(),
             });
         }, 1000);
 
@@ -363,6 +382,7 @@ export function WatchPartyPage() {
             positionSec: 0,
             isPlaying: false,
             playbackRate: 1,
+            sequence: nextOutboundSequence(),
         });
     };
 
@@ -409,6 +429,7 @@ export function WatchPartyPage() {
             channelId: activeChannelId,
             positionSec: positionSec ?? getCurrentTime(),
             playbackRate: getCurrentPlaybackRate(),
+            sequence: nextOutboundSequence(),
         });
     };
 
@@ -532,98 +553,98 @@ export function WatchPartyPage() {
                     <div className="relative rounded-xl overflow-hidden border border-gray-800 bg-black aspect-video">
                         {currentVideoId ? (
                             <>
-                            <ReactPlayer
-                                ref={playerRef}
-                                url={`https://www.youtube.com/watch?v=${currentVideoId}`}
-                                width="100%"
-                                height="100%"
-                                controls={canControl}
-                                playing={isPlaying}
-                                playbackRate={playbackRate}
-                                muted={shouldMutePlayer}
-                                onReady={() => {
-                                    setPlayerReady(true);
+                                <ReactPlayer
+                                    ref={playerRef}
+                                    url={`https://www.youtube.com/watch?v=${currentVideoId}`}
+                                    width="100%"
+                                    height="100%"
+                                    controls={canControl}
+                                    playing={isPlaying}
+                                    playbackRate={playbackRate}
+                                    muted={shouldMutePlayer}
+                                    onReady={() => {
+                                        setPlayerReady(true);
 
-                                    if (!isHost && mediaState) {
-                                        const expectedPosition = mediaState.isPlaying
-                                            ? mediaState.positionSec +
-                                              (Date.now() - mediaState.updatedAtMs) / 1000
-                                            : mediaState.positionSec;
+                                        if (!isHost && mediaState) {
+                                            const expectedPosition = mediaState.isPlaying
+                                                ? mediaState.positionSec +
+                                                (Date.now() - mediaState.updatedAtMs) / 1000
+                                                : mediaState.positionSec;
 
-                                        playerRef.current?.seekTo(Math.max(0, expectedPosition), 'seconds');
-                                        needsInitialSyncRef.current = false;
-                                    }
-                                }}
-                                onProgress={({ playedSeconds }) => {
-                                    const previous = lastProgressPositionRef.current;
-                                    latestPositionRef.current = playedSeconds;
-                                    lastProgressPositionRef.current = playedSeconds;
-                                    lastProgressWallClockRef.current = Date.now();
+                                            playerRef.current?.seekTo(Math.max(0, expectedPosition), 'seconds');
+                                            needsInitialSyncRef.current = false;
+                                        }
+                                    }}
+                                    onProgress={({ playedSeconds }) => {
+                                        const previous = lastProgressPositionRef.current;
+                                        latestPositionRef.current = playedSeconds;
+                                        lastProgressPositionRef.current = playedSeconds;
+                                        lastProgressWallClockRef.current = Date.now();
 
-                                    // Fallback for YouTube iframe: some seekbar drags don't fire onSeek.
-                                    if (canControl && previous !== null) {
-                                        const jumpDelta = Math.abs(playedSeconds - previous);
-                                        if (jumpDelta > 2.5) {
-                                            const now = Date.now();
-                                            if (now - lastSeekEmitAtRef.current >= 250) {
-                                                lastSeekEmitAtRef.current = now;
-                                                emitControl('room:media:seek', playedSeconds);
+                                        // Fallback for YouTube iframe: some seekbar drags don't fire onSeek.
+                                        if (canControl && previous !== null) {
+                                            const jumpDelta = Math.abs(playedSeconds - previous);
+                                            if (jumpDelta > 2.5) {
+                                                const now = Date.now();
+                                                if (now - lastSeekEmitAtRef.current >= 250) {
+                                                    lastSeekEmitAtRef.current = now;
+                                                    emitControl('room:media:seek', playedSeconds);
+                                                }
                                             }
                                         }
-                                    }
-                                }}
-                                onSeek={(seconds) => {
-                                    latestPositionRef.current = seconds;
-                                    if (canControl) {
-                                        if (suppressNextSeekEventRef.current) {
-                                            suppressNextSeekEventRef.current = false;
-                                            return;
-                                        }
+                                    }}
+                                    onSeek={(seconds) => {
+                                        latestPositionRef.current = seconds;
+                                        if (canControl) {
+                                            if (suppressNextSeekEventRef.current) {
+                                                suppressNextSeekEventRef.current = false;
+                                                return;
+                                            }
 
-                                        const now = Date.now();
-                                        if (now - lastSeekEmitAtRef.current < 250) {
-                                            return;
+                                            const now = Date.now();
+                                            if (now - lastSeekEmitAtRef.current < 250) {
+                                                return;
+                                            }
+                                            lastSeekEmitAtRef.current = now;
+                                            emitControl('room:media:seek', seconds);
                                         }
-                                        lastSeekEmitAtRef.current = now;
-                                        emitControl('room:media:seek', seconds);
-                                    }
-                                }}
-                                onPlay={() => {
-                                    if (canControl) {
-                                        if (suppressNextPlayEventRef.current) {
-                                            suppressNextPlayEventRef.current = false;
-                                            return;
+                                    }}
+                                    onPlay={() => {
+                                        if (canControl) {
+                                            if (suppressNextPlayEventRef.current) {
+                                                suppressNextPlayEventRef.current = false;
+                                                return;
+                                            }
+                                            setIsPlaying(true);
+                                            emitControl('room:media:play');
                                         }
-                                        setIsPlaying(true);
-                                        emitControl('room:media:play');
-                                    }
-                                }}
-                                onPause={() => {
-                                    if (canControl) {
-                                        if (document.hidden || hostBackgroundPlaybackRef.current) {
-                                            return;
+                                    }}
+                                    onPause={() => {
+                                        if (canControl) {
+                                            if (document.hidden || hostBackgroundPlaybackRef.current) {
+                                                return;
+                                            }
+                                            if (suppressNextPauseEventRef.current) {
+                                                suppressNextPauseEventRef.current = false;
+                                                return;
+                                            }
+                                            setIsPlaying(false);
+                                            emitControl('room:media:pause');
                                         }
-                                        if (suppressNextPauseEventRef.current) {
-                                            suppressNextPauseEventRef.current = false;
-                                            return;
-                                        }
-                                        setIsPlaying(false);
-                                        emitControl('room:media:pause');
-                                    }
-                                }}
-                                onError={(error) => {
-                                    const message = typeof error === 'string' ? error : 'Playback failed. This video may block embeds.';
-                                    toast.error(message);
-                                }}
-                            />
-                            {!canControl && shouldMutePlayer && (
-                                <button
-                                    onClick={() => setFollowerAudioEnabled(true)}
-                                    className="absolute bottom-3 right-3 z-10 px-3 py-2 text-xs rounded-md bg-radar-700 hover:bg-radar-600 text-white transition-colors"
-                                >
-                                    Enable audio
-                                </button>
-                            )}
+                                    }}
+                                    onError={(error) => {
+                                        const message = typeof error === 'string' ? error : 'Playback failed. This video may block embeds.';
+                                        toast.error(message);
+                                    }}
+                                />
+                                {!canControl && shouldMutePlayer && (
+                                    <button
+                                        onClick={() => setFollowerAudioEnabled(true)}
+                                        className="absolute bottom-3 right-3 z-10 px-3 py-2 text-xs rounded-md bg-radar-700 hover:bg-radar-600 text-white transition-colors"
+                                    >
+                                        Enable audio
+                                    </button>
+                                )}
                             </>
                         ) : (
                             <div className="w-full h-full flex items-center justify-center text-gray-500 text-sm">

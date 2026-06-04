@@ -60,6 +60,7 @@ interface MediaState {
   isPlaying: boolean;
   positionSec: number;
   playbackRate: number;
+  sequence: number;
   updatedAtMs: number;
   updatedByUserId: string;
 }
@@ -71,12 +72,14 @@ interface MediaSetPayload {
   positionSec?: number;
   isPlaying?: boolean;
   playbackRate?: number;
+  sequence?: number;
 }
 
 interface MediaControlPayload {
   channelId: string;
   positionSec: number;
   playbackRate?: number;
+  sequence?: number;
 }
 
 interface MediaStatePayload {
@@ -84,6 +87,7 @@ interface MediaStatePayload {
   positionSec: number;
   isPlaying: boolean;
   playbackRate?: number;
+  sequence?: number;
 }
 
 @WebSocketGateway({
@@ -169,7 +173,24 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
   ): Promise<void> {
     this.assertAuth(client);
     const { channelId } = payload;
+    const channel = await this.channelsService.findById(channelId).catch(() => null);
+    if (!channel || !channel.isActive) {
+      client.emit('channel:join_failed', { channelId, reason: 'Channel not found' });
+      return;
+    }
+
     const targetRoom = `channel:${channelId}`;
+    const alreadyInRoom = client.rooms.has(targetRoom);
+    if (alreadyInRoom) {
+      client.emit('channel:joined', { channelId });
+      return;
+    }
+
+    const currentUsers = typeof channel.activeUsers === 'number' ? channel.activeUsers : 0;
+    if (currentUsers >= channel.maxUsers) {
+      client.emit('channel:join_failed', { channelId, reason: 'Channel is full' });
+      return;
+    }
 
     // A user can stay in only one channel at a time.
     for (const room of Array.from(client.rooms)) {
@@ -193,11 +214,6 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
       });
     }
 
-    const alreadyInRoom = client.rooms.has(targetRoom);
-    if (alreadyInRoom) {
-      return;
-    }
-
     await client.join(targetRoom);
     await this.channelsService.incrementActiveUsers(channelId, 1);
 
@@ -213,8 +229,9 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
     const hostUserId = await this.redisService.get(this.mediaHostKey(channelId));
     const mediaState = await this.getMediaState(channelId);
     if (mediaState) {
-      client.emit('room:media:sync', { channelId, hostUserId, mediaState });
+      client.emit('room:media:state', { channelId, hostUserId, mediaState });
     }
+    client.emit('channel:joined', { channelId });
 
     this.logger.log(`${client.username ?? 'unknown'} joined channel ${channelId}`);
   }
@@ -325,6 +342,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
       isPlaying: payload.isPlaying ?? false,
       positionSec: this.sanitizePosition(payload.positionSec),
       playbackRate: this.sanitizeRate(payload.playbackRate),
+      sequence: this.sanitizeSequence(payload.sequence, 1),
       updatedAtMs: Date.now(),
       updatedByUserId: client.userId!,
     };
@@ -332,7 +350,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
     await this.setMediaState(channelId, mediaState);
 
     const hostUserId = await this.redisService.get(hostKey);
-    this.server.to(`channel:${channelId}`).emit('room:media:set', {
+    this.server.to(`channel:${channelId}`).emit('room:media:state', {
       channelId,
       hostUserId,
       mediaState,
@@ -348,6 +366,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
       positionSec: payload.positionSec,
       isPlaying: true,
       playbackRate: payload.playbackRate,
+      sequence: payload.sequence,
     });
   }
 
@@ -360,6 +379,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
       positionSec: payload.positionSec,
       isPlaying: false,
       playbackRate: payload.playbackRate,
+      sequence: payload.sequence,
     });
   }
 
@@ -371,6 +391,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
     await this.updateHostMediaState(client, payload.channelId, {
       positionSec: payload.positionSec,
       playbackRate: payload.playbackRate,
+      sequence: payload.sequence,
     });
   }
 
@@ -383,6 +404,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
       positionSec: payload.positionSec,
       isPlaying: payload.isPlaying,
       playbackRate: payload.playbackRate,
+      sequence: payload.sequence,
     });
   }
 
@@ -488,6 +510,11 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
     return Math.min(2, Math.max(0.25, numeric));
   }
 
+  private sanitizeSequence(value: unknown, fallback: number): number {
+    const numeric = typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : fallback;
+    return Math.max(1, numeric);
+  }
+
   private async setMediaState(channelId: string, mediaState: MediaState): Promise<void> {
     await this.redisService.set(
       this.mediaStateKey(channelId),
@@ -512,6 +539,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
         isPlaying: Boolean(parsed.isPlaying),
         positionSec: this.sanitizePosition(parsed.positionSec),
         playbackRate: this.sanitizeRate(parsed.playbackRate),
+        sequence: this.sanitizeSequence(parsed.sequence, 0),
         updatedAtMs:
           typeof parsed.updatedAtMs === 'number' && Number.isFinite(parsed.updatedAtMs)
             ? parsed.updatedAtMs
@@ -538,7 +566,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
   private async updateHostMediaState(
     client: AuthenticatedSocket,
     channelId: string,
-    patch: { positionSec?: number; isPlaying?: boolean; playbackRate?: number },
+    patch: { positionSec?: number; isPlaying?: boolean; playbackRate?: number; sequence?: number },
   ): Promise<void> {
     this.assertAuth(client);
     this.assertInChannel(client, channelId);
@@ -554,6 +582,11 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
       throw new WsException('No active media set for channel');
     }
 
+    const nextSequence = this.sanitizeSequence(patch.sequence, existing.sequence + 1);
+    if (nextSequence <= existing.sequence) {
+      return;
+    }
+
     const mediaState: MediaState = {
       ...existing,
       positionSec:
@@ -565,12 +598,16 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
         patch.playbackRate === undefined
           ? existing.playbackRate
           : this.sanitizeRate(patch.playbackRate),
+      sequence: nextSequence,
       updatedAtMs: Date.now(),
       updatedByUserId: client.userId!,
     };
 
     await this.setMediaState(channelId, mediaState);
-    this.server.to(`channel:${channelId}`).emit('room:media:sync', {
+    this.logger.debug(
+      `media-state channel=${channelId} seq=${mediaState.sequence} pos=${mediaState.positionSec.toFixed(3)} playing=${mediaState.isPlaying}`,
+    );
+    this.server.to(`channel:${channelId}`).emit('room:media:state', {
       channelId,
       hostUserId,
       mediaState,
