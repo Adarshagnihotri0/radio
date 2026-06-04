@@ -16,6 +16,7 @@ RUN npm ci
 # Build
 FROM installer AS builder
 COPY --from=pruner /app/out/full/ .
+COPY tsconfig.base.json ./tsconfig.base.json
 RUN turbo run build --filter=@radius/backend
 
 # Production image
@@ -28,6 +29,8 @@ RUN adduser --system --uid 1001 nestjs
 COPY --from=builder --chown=nestjs:nodejs /app/apps/backend/dist ./dist
 COPY --from=builder --chown=nestjs:nodejs /app/apps/backend/package.json ./package.json
 COPY --from=builder --chown=nestjs:nodejs /app/node_modules ./node_modules
+
+RUN mkdir -p logs && chown nestjs:nodejs logs
 
 USER nestjs
 EXPOSE 3000

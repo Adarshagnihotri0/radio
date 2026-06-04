@@ -4,6 +4,12 @@ import { Model, Types } from 'mongoose';
 import { VoiceSession, VoiceSessionDocument } from '../../database/schemas/voice-session.schema';
 import { ConfigService } from '@nestjs/config';
 
+export interface IceServer {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
+}
+
 @Injectable()
 export class VoiceService {
   constructor(
@@ -15,12 +21,10 @@ export class VoiceService {
   /**
    * Returns ICE server config to pass to WebRTC clients.
    */
-  getIceServers(): RTCIceServer[] {
-    const stunUrls = this.config.get<string[]>('webrtc.stunUrls', [
-      'stun:stun.l.google.com:19302',
-    ]);
+  getIceServers(): IceServer[] {
+    const stunUrls = this.config.get<string[]>('webrtc.stunUrls', ['stun:stun.l.google.com:19302']);
 
-    const iceServers: RTCIceServer[] = [{ urls: stunUrls }];
+    const iceServers: IceServer[] = [{ urls: stunUrls }];
 
     const turnUrl = this.config.get<string | null>('webrtc.turnUrl', null);
     const turnUsername = this.config.get<string | null>('webrtc.turnUsername', null);
@@ -58,9 +62,7 @@ export class VoiceService {
     if (session) {
       const endedAt = new Date();
       const durationMs = endedAt.getTime() - session.startedAt.getTime();
-      await this.voiceSessionModel
-        .findByIdAndUpdate(session._id, { endedAt, durationMs })
-        .exec();
+      await this.voiceSessionModel.findByIdAndUpdate(session._id, { endedAt, durationMs }).exec();
     }
   }
 
