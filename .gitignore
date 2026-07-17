@@ -94,3 +94,8 @@ apps/mobile/.expo/
 *.pem
 *.key
 *.crt
+# Security - Never commit sensitive files
+*.key
+*.pem
+*_key.json
+credentials.*
